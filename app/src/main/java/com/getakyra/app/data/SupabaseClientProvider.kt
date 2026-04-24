@@ -19,7 +19,10 @@ object SupabaseClientProvider {
         ) {
             install(Postgrest)
             install(Realtime)
-            install(Auth)
+            install(Auth) {
+                alwaysAutoRefresh = true
+                autoLoadFromStorage = false
+            }
         }
     }
 }

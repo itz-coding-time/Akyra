@@ -21,6 +21,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.getakyra.app.data.ShiftRepository
+import com.getakyra.app.data.SupabaseRepository
 import com.getakyra.app.features.docupro.ui.*
 import com.getakyra.app.features.hud.ui.ActiveHudScreen
 import com.getakyra.app.features.hud.ui.DelegationScreen
@@ -39,6 +40,7 @@ fun AkyraAppNavigation(repository: ShiftRepository) {
     val context = LocalContext.current
     val application = context.applicationContext as Application
     val prefs = context.getSharedPreferences("akyra_prefs", Context.MODE_PRIVATE)
+    val supabase = SupabaseRepository.getInstance()
 
     val overviewViewModel: OverviewViewModel = viewModel(factory = OverviewViewModel.factory(repository))
     val activeHudViewModel: ActiveHudViewModel = viewModel(factory = ActiveHudViewModel.factory(repository))
@@ -47,7 +49,7 @@ fun AkyraAppNavigation(repository: ShiftRepository) {
         factory = ManagerSettingsViewModel.factoryWithApp(application, repository)
     )
     val onboardingViewModel: OnboardingViewModel = viewModel(
-        factory = OnboardingViewModel.factoryWithApp(application, repository)
+        factory = OnboardingViewModel.factoryWithApp(application, repository, supabase)
     )
 
     var isOnboarded by remember { mutableStateOf(prefs.getBoolean("is_onboarded", false)) }

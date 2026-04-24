@@ -1,6 +1,8 @@
 package com.getakyra.app.data
 
 import android.util.Log
+import io.github.jan.supabase.gotrue.auth
+import io.github.jan.supabase.gotrue.providers.builtin.Email
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -13,8 +15,28 @@ class SupabaseRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val tag = "SupabaseRepository"
 
-    // TODO: Replace with value from authenticated user's profile once Auth is wired in.
-    private val devStoreId = "00000000-0000-0000-0000-000000000002"
+    private var currentStoreIdCache: String? = null
+
+    suspend fun currentStoreId(): String {
+        currentStoreIdCache?.let { return it }
+        val authUid = currentAuthUid() ?: return FALLBACK_DEV_STORE_ID
+        val profile = try {
+            client.from("profiles").select {
+                filter { eq("auth_uid", authUid) }
+            }.decodeSingleOrNull<SbProfile>()
+        } catch (e: Exception) {
+            Log.e(tag, "currentStoreId lookup failed: ${e.message}")
+            null
+        }
+        val storeId = profile?.currentStoreId?.takeIf { it.isNotBlank() }
+            ?: FALLBACK_DEV_STORE_ID
+        currentStoreIdCache = storeId
+        return storeId
+    }
+
+    fun clearStoreIdCache() {
+        currentStoreIdCache = null
+    }
 
     // ── Associates ────────────────────────────────────────────────────────────
 
@@ -28,14 +50,15 @@ class SupabaseRepository {
     fun upsertAssociate(associate: Associate) = scope.launch {
         try {
             val sb = SbAssociate(
-                storeId = devStoreId,
+                storeId = currentStoreId(),
                 name = associate.name,
                 role = associate.role,
                 currentArchetype = associate.currentArchetype,
                 pinCode = associate.pinCode,
                 scheduledDays = associate.scheduledDays,
                 defaultStartTime = associate.defaultStartTime,
-                defaultEndTime = associate.defaultEndTime
+                defaultEndTime = associate.defaultEndTime,
+                profileId = associate.profileId ?: ""
             )
             client.from("associates").upsert(sb)
         } catch (e: Exception) {
@@ -48,8 +71,8 @@ class SupabaseRepository {
     fun upsertScheduleEntry(entry: ScheduleEntry) = scope.launch {
         try {
             val sb = SbScheduleEntry(
-                storeId = devStoreId,
-                associateId = devStoreId, // TODO: resolve real associate UUID
+                storeId = currentStoreId(),
+                associateId = currentStoreId(), // TODO: resolve real associate UUID
                 startTime = entry.startTime,
                 endTime = entry.endTime
             )
@@ -71,7 +94,7 @@ class SupabaseRepository {
     fun upsertTask(task: ShiftTask) = scope.launch {
         try {
             val sb = SbTask(
-                storeId = devStoreId,
+                storeId = currentStoreId(),
                 taskName = task.taskName,
                 archetype = task.archetype,
                 basePoints = task.basePoints,
@@ -103,13 +126,14 @@ class SupabaseRepository {
     fun upsertInventoryItem(item: InventoryItem) = scope.launch {
         try {
             val sb = SbInventoryItem(
-                storeId = devStoreId,
+                storeId = currentStoreId(),
                 itemName = item.itemName,
                 buildTo = item.buildTo,
                 category = item.category,
                 amountHave = item.amountHave,
                 amountNeeded = item.amountNeeded,
-                isPulled = item.isPulled
+                isPulled = item.isPulled,
+                expectedCodeHours = item.expectedCodeHours
             )
             client.from("inventory_items").upsert(sb)
         } catch (e: Exception) {
@@ -129,11 +153,12 @@ class SupabaseRepository {
     fun upsertTableItem(item: TableItem) = scope.launch {
         try {
             val sb = SbTableItem(
-                storeId = devStoreId,
+                storeId = currentStoreId(),
                 itemName = item.itemName,
                 station = item.station,
                 isInitialed = item.isInitialed,
-                wasteAmount = item.wasteAmount
+                wasteAmount = item.wasteAmount,
+                expectedCodeHours = item.expectedCodeHours
             )
             client.from("table_items").upsert(sb)
         } catch (e: Exception) {
@@ -146,8 +171,8 @@ class SupabaseRepository {
     fun insertIncident(incident: IncidentLog) = scope.launch {
         try {
             val sb = SbIncident(
-                storeId = devStoreId,
-                associateId = devStoreId, // TODO: resolve real associate UUID
+                storeId = currentStoreId(),
+                associateId = currentStoreId(), // TODO: resolve real associate UUID
                 description = incident.description,
                 category = incident.category,
                 timestampMs = incident.timestampMs,
@@ -164,7 +189,7 @@ class SupabaseRepository {
     fun upsertShiftState(state: ShiftState) = scope.launch {
         try {
             val sb = SbShiftState(
-                storeId = devStoreId,
+                storeId = currentStoreId(),
                 startTimeMs = state.startTimeMs,
                 endTimeMs = state.endTimeMs,
                 shiftName = state.shiftName,
@@ -177,7 +202,109 @@ class SupabaseRepository {
         }
     }
 
+    // ── Auth ─────────────────────────────────────────────────────────────────
+
+    suspend fun signInWithEeidAndPin(eeid: String, pin: String): SbProfile? {
+        return try {
+            // Step 1: Look up profile by EEID to get auth_uid / email
+            val profile = fetchProfileByEeid(eeid) ?: run {
+                Log.e(tag, "signIn failed: no profile for EEID $eeid")
+                return null
+            }
+
+            if (profile.authUid.isBlank()) {
+                Log.e(tag, "signIn failed: profile has no auth_uid; needs first-time setup")
+                return null
+            }
+
+            // Step 2: Sign in via Supabase Auth using synthesized email
+            val syntheticEmail = "$eeid@akyra.internal"
+            client.auth.signInWith(Email) {
+                email = syntheticEmail
+                password = pin
+            }
+
+            profile
+        } catch (e: Exception) {
+            Log.e(tag, "signInWithEeidAndPin failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun registerAuthForProfile(eeid: String, pin: String): SbProfile? {
+        return try {
+            // Step 1: Find the profile
+            val profile = fetchProfileByEeid(eeid) ?: run {
+                Log.e(tag, "registerAuth failed: no profile for EEID $eeid")
+                return null
+            }
+
+            if (profile.authUid.isNotBlank()) {
+                Log.e(tag, "registerAuth failed: profile already has auth_uid")
+                return null
+            }
+
+            // Step 2: Create Supabase Auth user with synthesized email
+            val syntheticEmail = "$eeid@akyra.internal"
+            client.auth.signUpWith(Email) {
+                email = syntheticEmail
+                password = pin
+            }
+
+            // Step 3: Grab the new auth user's id
+            val newAuthUid = client.auth.currentUserOrNull()?.id ?: run {
+                Log.e(tag, "registerAuth failed: no current user after signup")
+                return null
+            }
+
+            // Step 4: Update the profile row with auth_uid
+            client.from("profiles").update({ set("auth_uid", newAuthUid) }) {
+                filter { eq("eeid", eeid) }
+            }
+
+            profile.copy(authUid = newAuthUid)
+        } catch (e: Exception) {
+            Log.e(tag, "registerAuthForProfile failed: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun signOut() = try {
+        client.auth.signOut()
+        clearStoreIdCache()
+    } catch (e: Exception) {
+        Log.e(tag, "signOut failed: ${e.message}")
+    }
+
+    fun currentAuthUid(): String? = try {
+        client.auth.currentUserOrNull()?.id
+    } catch (e: Exception) {
+        null
+    }
+
+    // ── Profiles ──────────────────────────────────────────────────────────────
+
+    suspend fun fetchProfileByEeid(eeid: String): SbProfile? = try {
+        client.from("profiles").select {
+            filter { eq("eeid", eeid) }
+        }.decodeSingleOrNull()
+    } catch (e: Exception) {
+        Log.e(tag, "fetchProfileByEeid failed: ${e.message}")
+        null
+    }
+
+    suspend fun insertProfile(profile: SbProfile): SbProfile? = try {
+        client.from("profiles").insert(profile) {
+            select()
+        }.decodeSingleOrNull()
+    } catch (e: Exception) {
+        Log.e(tag, "insertProfile failed: ${e.message}")
+        null
+    }
+
     companion object {
+        private const val FALLBACK_DEV_STORE_ID = "00000000-0000-0000-0000-000000000002"
+
         @Volatile private var INSTANCE: SupabaseRepository? = null
         fun getInstance(): SupabaseRepository =
             INSTANCE ?: synchronized(this) {

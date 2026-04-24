@@ -5,47 +5,67 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.getakyra.app.data.Associate
-import com.getakyra.app.data.ScheduleEntry
 import com.getakyra.app.data.ShiftRepository
+import com.getakyra.app.data.SupabaseRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class OnboardingViewModel(
     application: Application,
-    private val repository: ShiftRepository
+    private val repository: ShiftRepository,
+    private val supabase: SupabaseRepository
 ) : AndroidViewModel(application) {
 
-    fun completeOnboarding(modName: String, modPin: String, selectedShift: String, onComplete: () -> Unit) {
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    fun completeOnboarding(eeid: String, pin: String, onComplete: () -> Unit) {
         viewModelScope.launch {
-            val finalPin = if (modPin.isBlank()) "1234" else modPin
+            _isLoading.value = true
+            _error.value = null
+
+            val finalPin = if (pin.isBlank()) "1234" else pin
 
             getApplication<Application>()
                 .getSharedPreferences("akyra_prefs", Context.MODE_PRIVATE)
                 .edit().putString("manager_pin", finalPin).apply()
 
-            repository.insertAssociate(
-                Associate(name = modName, role = "Manager", currentArchetype = "MOD", pinCode = finalPin)
-            )
-
-            val (start, end) = when (selectedShift) {
-                "Morning" -> "06:00" to "16:30"
-                "Afternoon" -> "14:00" to "00:30"
-                else -> "22:00" to "08:30"
+            val registered = supabase.registerAuthForProfile(eeid, finalPin)
+            if (registered != null) {
+                val signedIn = supabase.signInWithEeidAndPin(eeid, finalPin)
+                if (signedIn != null) {
+                    _isLoading.value = false
+                    onComplete()
+                } else {
+                    _error.value = "Registration succeeded but sign-in failed. Please try logging in."
+                    _isLoading.value = false
+                }
+            } else {
+                _error.value = "Could not complete setup. Check your EEID and try again."
+                _isLoading.value = false
             }
-            repository.insertScheduleEntry(
-                ScheduleEntry(associateName = modName, startTime = start, endTime = end)
-            )
-
-            onComplete()
         }
     }
 
+    fun clearError() {
+        _error.value = null
+    }
+
     companion object {
-        fun factoryWithApp(application: Application, repository: ShiftRepository): ViewModelProvider.Factory =
+        fun factoryWithApp(
+            application: Application,
+            repository: ShiftRepository,
+            supabase: SupabaseRepository
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                    OnboardingViewModel(application, repository) as T
+                    OnboardingViewModel(application, repository, supabase) as T
             }
     }
 }
