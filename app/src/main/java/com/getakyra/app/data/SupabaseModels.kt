@@ -13,7 +13,8 @@ data class SbAssociate(
     @SerialName("pin_code") val pinCode: String? = null,
     @SerialName("scheduled_days") val scheduledDays: String = "",
     @SerialName("default_start_time") val defaultStartTime: String = "22:00",
-    @SerialName("default_end_time") val defaultEndTime: String = "06:30"
+    @SerialName("default_end_time") val defaultEndTime: String = "06:30",
+    @SerialName("profile_id") val profileId: String = ""
 )
 
 @Serializable
@@ -53,7 +54,8 @@ data class SbInventoryItem(
     val category: String = "",
     @SerialName("amount_have") val amountHave: Int? = null,
     @SerialName("amount_needed") val amountNeeded: Int? = null,
-    @SerialName("is_pulled") val isPulled: Boolean = false
+    @SerialName("is_pulled") val isPulled: Boolean = false,
+    @SerialName("expected_code_hours") val expectedCodeHours: Int = 24
 )
 
 @Serializable
@@ -63,7 +65,8 @@ data class SbTableItem(
     @SerialName("item_name") val itemName: String = "",
     val station: String = "",
     @SerialName("is_initialed") val isInitialed: Boolean = true,
-    @SerialName("waste_amount") val wasteAmount: String? = null
+    @SerialName("waste_amount") val wasteAmount: String? = null,
+    @SerialName("expected_code_hours") val expectedCodeHours: Int = 24
 )
 
 @Serializable
@@ -75,6 +78,24 @@ data class SbIncident(
     val category: String = "",
     @SerialName("timestamp_ms") val timestampMs: Long = 0L,
     @SerialName("is_statement_generated") val isStatementGenerated: Boolean = false
+)
+
+@Serializable
+data class SbProfile(
+    val id: String = "",
+    @SerialName("org_id") val orgId: String = "",
+    @SerialName("current_store_id") val currentStoreId: String = "",
+    val eeid: String = "",
+    val role: String = "",
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("auth_uid") val authUid: String = ""
+)
+
+@Serializable
+data class SbAuthSession(
+    @SerialName("access_token") val accessToken: String = "",
+    @SerialName("refresh_token") val refreshToken: String = "",
+    @SerialName("user_id") val userId: String = ""
 )
 
 @Serializable

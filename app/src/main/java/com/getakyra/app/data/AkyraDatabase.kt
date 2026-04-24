@@ -13,7 +13,8 @@ data class Associate(
     val pinCode: String? = null,
     val scheduledDays: String = "",
     val defaultStartTime: String = "22:00",
-    val defaultEndTime: String = "06:30"
+    val defaultEndTime: String = "06:30",
+    val profileId: String? = null
 )
 
 @Entity(tableName = "schedule_entries")
@@ -32,7 +33,8 @@ data class InventoryItem(
     val category: String,
     val amountHave: Int? = null,
     val amountNeeded: Int? = null,
-    val isPulled: Boolean = false
+    val isPulled: Boolean = false,
+    val expectedCodeHours: Int = 24
 )
 
 @Entity(tableName = "table_items")
@@ -41,7 +43,8 @@ data class TableItem(
     val itemName: String,
     val station: String,
     val isInitialed: Boolean = true,
-    val wasteAmount: String? = null
+    val wasteAmount: String? = null,
+    val expectedCodeHours: Int = 24
 )
 
 @Entity(tableName = "tasks")
@@ -165,7 +168,7 @@ interface AkyraDao {
         Associate::class, ScheduleEntry::class, ShiftTask::class,
         InventoryItem::class, IncidentLog::class, ShiftState::class, TableItem::class
     ],
-    version = 10,
+    version = 12,
     exportSchema = false
 )
 abstract class AkyraDatabase : RoomDatabase() {
